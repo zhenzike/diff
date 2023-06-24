@@ -167,18 +167,19 @@ h(sel,data,'文字')
 h(sel,data,h())
 ```
 
-#### vnode
+#### myVnode
 
 ```js
 //该函数的功能仅仅是传入的参数组合成对象，返回即可
 export default function(sel,data,children,text,elm){
+      let key=data.key
       return {
-        sel,data,children,text,elm
+        sel,data,children,text,elm,key
       }
 }
 ```
 
-#### h函数
+#### myH函数
 
 ```js
 import myVnode from "./myVnode";
@@ -340,7 +341,7 @@ export default function createElement(vnode) {
 }
 ```
 
-### patch函数【删除插入部分】
+### myPatch函数【删除插入部分】
 
 ```js
 const myVnode=myH('ul',{},[
@@ -380,7 +381,7 @@ export default function (oldVnode, newVnode) {
 }
 ```
 
-### 精细化比较
+### 精细化比较【同一节点】
 
 **当oldVnode与newVnode的sel以及key相同时【同一个节点】**：
 
@@ -453,5 +454,251 @@ export default function (oldVnode, newVnode) {
 }
 ```
 
+#### myPatchVnode函数
+
+将同一个节点的处理方法提炼出来作为myPatchVnode函数，用于递归处理同一节点的情况
+
+```js
+export default function myPatchVnode(oldVnode,newVnode) {
+    newVnode.elm=oldVnode.elm
+    //判断新旧vnode是否是同一个对象
+    if (oldVnode === newVnode) return
+    //新节点有text属性
+    if (newVnode.text != undefined && (newVnode.children == undefined || newVnode.children.length == 0)) {
+        if (newVnode.text != oldVnode.text) {
+            oldVnode.elm.innerText = newVnode.text
+        }
+    } else {
+        //    新vnode没有text属性，有children
+        if (oldVnode.children != undefined && oldVnode.children.length > 0) {
+            // 老的有children，此为最复杂情况，即新老都有children
+
+        } else {
+            //老的没有children
+            oldVnode.elm.innerHTML = ''
+            newVnode.children.forEach(k => {
+                let dom = createElement(k)
+                oldVnode.elm.appendChild(dom)
+            })
+            // oldVnode.elm.appendChild(createElement(newVnode.children))
+        }
+    }
+}
+```
+
 #### 新旧节点都有children
+
+##### 四种命中查找方式
+
+四种命中查找:
+
+1. **新前**与**旧前**。
+2. **新后**与**旧后**。
+3. **新后**与**旧前**。【此种命中了，涉及移动节点，将旧前指向的节点，移动到旧后之后，同时设置旧前指向的节点undefined的标记(==即不再参与命中==)】
+4. **新前**与**旧后**。【此种命中了，涉及移动节点，那么旧后指向的节点，移动到旧前之前，，同时设置旧后指向的节点undefined的标记(==即不再参与命中==)】
+
+新前：新的虚拟节点当中==没有处理的开头==的节点
+
+新后：新的虚拟节点当中==没有处理的结尾==的节点
+
+旧前、旧后同理
+
+**注意**：
+
+- <span style=color:red>命中规则是**从 1 到 4 依次命中的**，命中了某一条规则时，会首先进行该套规则下的节点移动，再重新从规则 1 开始继续依次尝试命中，直到下一次没有命中时，才会去尝试命中下一条规则，若四种规则都没有命中则开始**循环**</span>。
+- 在四种命中查找中，前指针只会后移，后指针只会前移。
+- 四种命中查找循环的条件是：**新前<=新后&&旧前<=旧后**
+- <span style=color:red>都没有命中时的循环规则为：在老节点中，命中与新前节点相同的节点，并将命中的节点的DOM移动到旧前节点之前</span>
+
+##### 新增的情况
+
+<img src='tu/命中-新增.jpg'>
+
+图中情况是在就节点末尾新增了两个节点。首先，**新前与旧前**，A与A相同，两个指针都下移，B与B，C与C都相同，“新前”移动到了D，“旧前”移动到了“旧后”的下边:
+
+<img src='tu/命中-新增2.jpg'>
+
+旧前>旧后，不满足循环条件，**旧节点先结束循环**，说明新节点中有剩余的节点没有被遍历，**新前与新后之间的所有节点都是要新增的节点**，此时将这些节点插入到DOM当中即可
+D和E还没有被扫描，循环就结束了，说明DE就是新增的节点
+
+##### 删除的情况
+
+<img src='tu/命中-删除1.jpg'>
+
+图中为在旧节点删除了一个节点c，首先，**新前与旧前**，A与A相同，两个指针都下移，B与B相同，“新前”移动到了D，“旧前”移动到了C:
+
+<img src='tu/命中-删除2.jpg'>
+
+此时，旧前与新前无法命中，开始**旧后与新后**，两个指针都上移，旧后移动到了旧前的位置，新后移动到了B,在新前之前:
+
+<img src="tu/命中-删除3.jpg">
+
+新前>新后，不满足循环条件，**新节点先结束循环**，说明旧节点中有剩余的节点没有被命中，**旧前与旧后之间的所有节点都是要删除的节点**，此时将这些节点在DOM当中删除即可
+
+C还没有被命中，循环就结束了，说明C就是删除的节点
+
+##### 多删除的情况
+
+<img src='tu/命中-多删除.jpg'>
+
+图中为在旧节点删除了一个位于中间的节点C以及末尾的节点E，首先，**新前与旧前**，A与A相同，两个指针都下移，B与B相同，“新前”移动到了D，“旧前”移动到了C:
+
+<img src='tu/命中-多删除2.jpg'>
+
+此时，旧前与新前无法命中，开始**旧后与新后**，由于旧后指向E,新后指向D,因此旧后与新后无法命中，开始**新后与旧前**，又由于新后指向D,旧前指向C,因此也无法命中，开始**旧后与新前**，由于旧后指向E,新前指向D,因此**四种命中规则都未能继续命中**，**==开始循环==**。
+
+具体操作就是：新节点当前排查到了D，于是在旧节点中循环遍历，找到了D，就把旧D标为undefined【标的是虚拟D节】，旧D的DOM实际要移动到的位置为所有未处理的节点之前（C的前边），由于新前命中了，再然后“新前”下移，新前>新后了，循环结束。此时，“旧前”与“旧后”之间的节点就是没有处理过的节点（C、E），删除。
+
+
+
+#### myUpdateChildren函数
+
+```js
+import myPatchVnode from './myPatchVnode'
+import createElement from './createElement';
+
+export default function myUpdateChildren(parentElm, oldChildren, newChildren) {
+
+    let oldStartPointer = 0;                     // 旧前指针
+    let oldEndPointer = oldChildren.length - 1;  // 旧后指针
+    let newStartPointer = 0;                     // 新前指针
+    let newEndPointer = newChildren.length - 1;  // 新后指针
+
+    let oldStartVnode = oldChildren[oldStartPointer];   // 旧前节点
+    let oldEndVnode = oldChildren[oldEndPointer];       // 旧后节点
+    let newStartVnode = newChildren[newStartPointer];   // 新前节点
+    let newEndVnode = newChildren[newEndPointer]        // 新后节点
+
+    let keyMap = null
+
+
+    while (oldStartPointer <= oldEndPointer && newStartPointer <= newEndPointer) {
+        //遇见被标记为undefined虚拟节点时，直接跳过
+
+        if (oldStartVnode == undefined|| oldChildren[oldStartPointer] === undefined) {
+            oldStartVnode = oldChildren[++oldStartPointer]
+        } else if (oldEndVnode == undefined || oldChildren[oldEndPointer] === undefined) {
+            oldEndVnode = oldChildren[--oldEndPointer]
+        } else if (newStartVnode == undefined || newChildren[newStartPointer] === undefined) {
+            newStartVnode = newChildren[++newStartPointer]
+        } else if (newEndVnode == undefined || newChildren[newEndPointer] === undefined) {
+            newEndVnode = newChildren[--newEndPointer]
+        } else if (checkSameVnode(newStartVnode, oldStartVnode)) {   //新前与旧前 指针指向的节点是同一个节点【是否命中】，则开始精细化对比
+            console.log('新前与旧前1');
+            myPatchVnode(oldStartVnode,newStartVnode)
+            newStartVnode = newChildren[++newStartPointer]    //新前下移
+            oldStartVnode = oldChildren[++oldStartPointer]    //旧前下移       
+        }  //新后与旧后
+        else if (checkSameVnode(newEndVnode, oldEndVnode)) {
+            console.log('新后与旧后2');
+            myPatchVnode( oldEndVnode,newEndVnode)
+            newEndVnode = newChildren[--newEndPointer]    //新后上移
+            oldEndVnode = oldChildren[--oldEndPointer]    //旧后上移         
+        }  //新后与旧前
+        else if (checkSameVnode(newEndVnode, oldStartVnode)) {
+            console.log('新后与旧前3');
+            myPatchVnode(oldStartVnode,newEndVnode)
+            // 移动节点，将旧前指向的节点，移动到旧后之后
+            parentElm.insertBefore(oldStartVnode.elm, oldEndVnode.elm.nextSibling)
+
+            newEndVnode = newChildren[--newEndPointer]    //新后上移
+            oldStartVnode = oldChildren[++oldStartPointer]    //旧前下移     
+        } //新前与旧后
+        else if (checkSameVnode(newStartVnode, oldEndVnode)) {
+            console.log('新前与旧后4');
+            myPatchVnode(oldEndVnode,newStartVnode)
+            // 移动节点，将旧后指向的节点，移动到旧前之前
+            parentElm.insertBefore(oldEndVnode.elm, oldStartVnode.elm)
+            newStartVnode = newChildren[++newStartPointer]    //新前下移
+            oldEndVnode = oldChildren[--oldEndPointer]    //旧后上移     
+        } else {
+            //全都没有命中
+            console.log('全未命中');
+            //寻找旧节点中key与index的map，用于寻找新前节点是否为新增，以及插入位置
+            if (!keyMap) {
+                keyMap = {}
+                for (let i = oldStartPointer; i <= oldEndPointer; i++) {
+                    const key = oldChildren[i].key
+                    if (key != undefined) {
+                        keyMap[key] = i
+                    }
+                }
+            }
+            //    寻找新前节点在旧节点的keyMap中的映射的位置序号
+            const idxInOld = keyMap[newStartVnode.key]
+            //如果inxInOld是undefined表示它是全新的项,不是则需要移动
+            if (idxInOld == undefined) {
+                //创建新前节点的DOM并将该项移动至旧前节点的DOM之前
+                parentElm.insertBefore(createElement(newStartVnode), oldStartVnode.elm)
+            } else {
+                const elmToMove = oldChildren[idxInOld]   //获取老节点中与新前节点对应的节点，用于移动      
+                myPatchVnode(elmToMove, newStartVnode)
+                oldChildren[idxInOld] = undefined
+                parentElm.insertBefore(elmToMove.elm, oldStartVnode.elm)
+            }
+            newStartVnode = newChildren[++newStartPointer]
+
+        }
+    }
+
+
+    //循环结束
+    if (newStartPointer <= newEndPointer) { //循环结束后新前仍旧小于新后，说明有节点需要插入
+        for (let i = newStartPointer; i <= newEndPointer; i++) {
+            const before=newChildren[newEndPointer+1]==null?null:newChildren[newEndPointer+1].elm;
+            console.log(before);
+            parentElm.insertBefore(createElement(newChildren[i]), before)
+        }
+    } else if (oldStartPointer <= oldEndPointer) {  //循环结束后旧前仍旧小于旧后，说明有节点需要删除
+        for (let i = oldStartPointer; i <= oldEndPointer; i++) {
+            oldChildren[i] && parentElm.removeChild(oldChildren[i].elm)
+        }
+    }
+}
+
+//判断是否为同一个节点
+function checkSameVnode(a, b) {
+
+    return a.sel == b.sel && a.key == b.key
+}
+```
+
+测试数据index.js
+
+```js
+import myH from "./mySnabbdom/myH";
+import myPatch from "./mySnabbdom/myPatch";
+
+
+const container = document.getElementById('container')
+const btn = document.getElementById('btn')
+
+let vnode1 = myH('ul', {}, [
+   myH('li', { key: 'A' }, 'A'),
+   myH('li', { key: 'B' }, 'B'),
+   myH('li', { key: 'C' }, 'C'),
+   myH('li', { key: 'D' }, 'D'),
+   myH('li', { key: 'E' }, 'E'),
+])
+
+let vnode2 = myH('ul', {}, [
+
+   myH('li', { key: 'V' }, 'V'),
+   myH('li', { key: 'E' }, 'E'),
+   myH('li', { key: 'O' }, 'O'),
+   myH('li', { key: 'D' }, 'D'),
+   myH('li', { key: 'C' }, 'C'),
+   myH('li', { key: 'QQQ' }, 'QQQ'),
+   myH('li', { key: 'B' }, 'B'),
+   myH('li', { key: 'A' }, 'A'),
+])
+
+myPatch(container, vnode1)
+
+btn.onclick = function () {
+   myPatch(vnode1, vnode2)
+}
+
+
+```
 

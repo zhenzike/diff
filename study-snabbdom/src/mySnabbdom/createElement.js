@@ -1,5 +1,6 @@
 //真正创建节点。将vnode创建为DOM，插入到pivot【标杆节点】这个元素中
 export default function createElement(vnode) {
+  
     let domNode = document.createElement(vnode.sel)
     //有子节点还是有文本
     if (vnode.text != '' && vnode.children == undefined || vnode.children.length == 0) {//内部为文本
